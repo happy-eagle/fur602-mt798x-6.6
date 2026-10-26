@@ -69,18 +69,20 @@ fi
 grep -q 'kmod-mediatek_hnat' "$SRC_DIR/package/mtk/drivers/mt_wifi/Makefile" || \
 	die "mt_wifi 的 Makefile 结构已变（找不到 kmod-mediatek_hnat 依赖）"
 
-# 内核侧打开 HNAT。CONFIG_IP_NF_NAT 必须为 y（bool 符号不能依赖 m），
-# 否则 CONFIG_NET_MEDIATEK_HNAT 根本不可选。
+# 内核侧打开 HNAT。NET_MEDIATEK_HNAT 是 tristate，用 =m：
+# 它 depends on IP_NF_NAT，而 IP_NF_NAT 由 kmod-ipt-nat 提供为 =m，
+# tristate 依赖 m 合法。强推 =y 会把 kmod-ipt-nat/core 的 .ko 变成内建，
+# 打包阶段必然报缺文件。这里把三个符号都钉成 =m，避免依赖被漏选。
 KCFG="$SRC_DIR/target/linux/mediatek/filogic/config-6.6"
 [ -f "$KCFG" ] || die "找不到 $KCFG"
 for sym in CONFIG_NET_MEDIATEK_HNAT CONFIG_IP_NF_NAT CONFIG_IP_NF_IPTABLES; do
-	if grep -q "^${sym}=y$" "$KCFG"; then
-		log "内核配置已有 ${sym}=y"
+	if grep -q "^${sym}=m$" "$KCFG"; then
+		log "内核配置已有 ${sym}=m"
 	else
-		# 先删掉可能存在的 =m / is not set 行，再追加 =y
+		# 先删掉可能存在的 =y / is not set 行，再追加 =m
 		sed -i "/^${sym}=/d;/^# ${sym} is not set$/d" "$KCFG"
-		echo "${sym}=y" >> "$KCFG"
-		log "内核配置 += ${sym}=y"
+		echo "${sym}=m" >> "$KCFG"
+		log "内核配置 += ${sym}=m"
 	fi
 done
 
