@@ -20,11 +20,13 @@
 //      MTK_PUPD_SET_R1R0_11 宏。本树 360T7 / RAX3000M-mtk 都是裸数值写法，
 //      宏来自 SDK 的 dtsi，换树容易踩空。数值等价：8mA / R1R0_11(=3)。
 //
-// 关于 wifi eeprom（重要，别改回 mtd-eeprom）：
+// 关于 wifi eeprom（重要）：
 //   闭源 mt_wifi 不读 DTS 的 eeprom 节点，它按 defconfig 的
-//   CONFIG_MTK_RT_FIRST_CARD_EEPROM="flash" + CONFIG_MTK_RT_FIRST_IF_RF_OFFSET
-//   直接读 flash。这里的 nvmem-cells 是给开源 mt76 用的（同一份 DTS 两用），
-//   也是本树的标准写法（对照 rax3000m-mtk / 本机参考版）。
+//   CONFIG_MTK_RT_FIRST_CARD_EEPROM="flash" + CONFIG_MTK_RT_FIRST_IF_RF_OFFSET=0xc0000
+//   直接读 Factory 分区。所以 &wifi 里只写 status = "okay"，
+//   与上游 cmcc,rax3000m 等 -mtk 机型完全一致。
+//   Factory 下的 eeprom_factory_0 cell 保留着，给以后可能换开源 mt76 时用，
+//   当前没有任何节点引用它，不影响 mt_wifi。
 //
 // 刷机前提（硬性，不满足必砖）：
 //   U-Boot 必须是 hanwckf/bl-mt798x 的 mt7981_honor_fur-602，
@@ -289,8 +291,23 @@
 	status = "okay";
 };
 
+&hnat {
+	/* 单 gmac0 接 MT7531（DSA）。dtsi 默认是双 gmac 参考板的
+	 * mtketh-max-gmac = <2>，这里改回 1。
+	 * mtkdsa-wan-port 必须给出，否则 hnat_dsa_is_enable() 恒为 false，
+	 * 硬件 NAT 卸载不会启用（交换机 port0 = WAN）。
+	 */
+	mtketh-max-gmac = <1>;
+	mtkdsa-wan-port = <0>;
+	status = "okay";
+};
+
 &wifi {
-	nvmem-cells = <&eeprom_factory_0>;
-	nvmem-cell-names = "eeprom";
+	/* 闭源 mt_wifi 不走 nvmem：它按
+	 *   CONFIG_MTK_RT_FIRST_CARD_EEPROM="flash"
+	 *   CONFIG_MTK_RT_FIRST_IF_RF_OFFSET=0xc0000
+	 * 直接读 Factory 分区。这里只写 status，
+	 * 与上游 cmcc,rax3000m 等 -mtk 机型保持一致。
+	 */
 	status = "okay";
 };
