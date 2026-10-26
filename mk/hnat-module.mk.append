@@ -1,0 +1,34 @@
+// 追加到 target/linux/mediatek/modules.mk 末尾
+// 由 diy-part2.sh 自动插入，不需要手动改
+//
+// 为什么要加这个：
+//   本树把 HNAT 做成了内核驱动源码
+//     target/linux/mediatek/files-6.6/drivers/net/ethernet/mediatek/mtk_hnat/
+//   （由 patches-6.6/999-2745-mtkhnat-add-mtkhnat-driver-support.patch 引入，
+//     配置符号 CONFIG_NET_MEDIATEK_HNAT，Kconfig 里是 tristate），
+//   但整棵树没有定义 kmod-mediatek_hnat 这个包；而
+//   package/mtk/drivers/mt_wifi/Makefile 里写着 DEPENDS+=+kmod-mediatek_hnat。
+//
+//   依赖不可满足时，配置系统会把 kmod-mt_wifi 整包丢掉 —— 固件里没有闭源
+//   WiFi，而且 make defconfig 不报错，是完全静默的失败。
+//
+// 为什么放在 modules.mk 而不是新建一个 package/xxx/Makefile：
+//   这个文件由 package/kernel/linux/Makefile 引入，此时内核已经编好，
+//   只需要声明「哪个 .ko 属于哪个包」，不需要自己写 Build/Compile。
+//   独立包如果没写 Build/Compile，OpenWrt 会去空的 PKG_BUILD_DIR 里跑 make，
+//   直接报 "No targets specified and no makefile found"（踩过）。
+//   本文件里已有的 ata-ahci-mtk / btmtkuart 就是同样的写法。
+
+define KernelPackage/mediatek_hnat
+  SUBMENU:=Network Support
+  TITLE:=MediaTek HNAT (PPE) hardware NAT offload
+  KCONFIG:=CONFIG_NET_MEDIATEK_HNAT
+  FILES:=$(LINUX_DIR)/drivers/net/ethernet/mediatek/mtk_hnat/mtkhnat.ko
+  AUTOLOAD:=$(call AutoLoad,50,mtkhnat)
+endef
+
+define KernelPackage/mediatek_hnat/description
+ MediaTek HNAT/PPE hardware NAT offload. Required by kmod-mt_wifi (WHNAT).
+endef
+
+$(eval $(call KernelPackage,mediatek_hnat))
