@@ -83,7 +83,10 @@ jobs:
           # 断言：设备真的注册进去了
           grep -q 'define Device/honor_fur-602' target/linux/mediatek/image/filogic.mk
           test -f target/linux/mediatek/dts/mt7981b-honor-fur-602.dts
-          grep -q 'honor,fur-602)' target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+          grep -q 'honor,fur-602|' target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+          grep -q 'mtd_get_mac_binary Factory 0x2a' target/linux/mediatek/filogic/base-files/etc/board.d/02_network
+          test -f package/mtk/drivers/hnat/Makefile
+          grep -q '^CONFIG_NET_MEDIATEK_HNAT=y$' target/linux/mediatek/filogic/config-6.6
 
       - name: Configure
         working-directory: owrt
