@@ -1,0 +1,9 @@
+# 强制 LF：这些文件会在 Linux 编译机上被 bash/make 直接执行，
+# Windows 下 core.autocrlf=true 提交成 CRLF 会导致
+# "bash: $'\r': command not found" 或 make 解析失败。
+* text=auto eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.config text eol=lf
+*.dts text eol=lf
+*.md text eol=lf
