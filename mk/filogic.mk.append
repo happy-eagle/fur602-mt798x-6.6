@@ -1,0 +1,31 @@
+// 追加到 target/linux/mediatek/image/filogic.mk 末尾
+// 由 diy-part2.sh 自动插入，不需要手动改
+//
+// 注意：DEVICE_PACKAGES 里绝对不能出现 kmod-mt7915e / kmod-mt7981-firmware /
+// mt7981-wo-firmware —— 那是开源 mt76 的包，会和闭源 kmod-mt_wifi 抢同一个
+// wifi 节点，结果是两个驱动都编译进去、开机无线直接不工作。
+
+define Device/honor_fur-602
+  DEVICE_VENDOR := HONOR
+  DEVICE_MODEL := FUR-602
+  DEVICE_ALT0_VENDOR := HONOR
+  DEVICE_ALT0_MODEL := FUR-603
+  DEVICE_DTS := mt7981b-honor-fur-602
+  DEVICE_DTS_DIR := ../dts
+  SUPPORTED_DEVICES += honor,fur-602 honor,fur-603
+  DEVICE_PACKAGES := kmod-mt_wifi mtwifi-cfg luci-app-mtwifi-cfg \
+	kmod-mediatek_hnat kmod-warp
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  IMAGE_SIZE := 116736k
+  KERNEL_IN_UBI := 1
+  IMAGES += factory.bin
+  IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE)
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  KERNEL = kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb
+  KERNEL_INITRAMFS = kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd
+endef
+TARGET_DEVICES += honor_fur-602
