@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+//
+// HONOR FUR-602 / FUR-603  (联通定制 XU50 / XT50 / XC50)
+//   SoC   : MediaTek MT7981B (Filogic 820), 2x A53 @1.3GHz
+//   RAM   : 256 MiB DDR3
+//   Flash : 128 MiB SPI-NAND, NMBM enabled
+//   WLAN  : MT7981 2.4G 2x2 + MT7976CN 5G 2x2 = AX3000
+//   ETH   : MT7531 switch (DSA), 1x 1G WAN + 3x 1G LAN, all behind gmac0
+//
+// 目标树: padavanonly/immortalwrt-mt798x-6.6 @ openwrt-24.10-6.6
+//         (Linux 6.6 + MTK SDK 补丁 + 闭源 mt_wifi 7.6.6.1)
+//
+// 本文件对齐 `fur602 dts.rar` 里 dts/6.6-padavanonly 与 dts/6.6-closewrt 两个
+// 已在实机出过包的版本（对应 README 的固件 02 / 04），只保留三处有意差异：
+//   1. LED 用 function/color 写法（24.10 规范，生成 green:status）。参考版用
+//      label = "green:status"，两者等价，前者不会在 25.x 被弃用。
+//   2. 追加 wan 口 MAC（Factory@0x24）——参考版没设，导致 WAN 与 LAN 共用
+//      gmac0 的 MAC。schema12 的开源版用 0x24，两处交叉验证过。
+//   3. pinctrl 用裸数值 + mediatek,pull-*-adv，不用 MTK_DRIVE_8mA /
+//      MTK_PUPD_SET_R1R0_11 宏。本树 360T7 / RAX3000M-mtk 都是裸数值写法，
+//      宏来自 SDK 的 dtsi，换树容易踩空。数值等价：8mA / R1R0_11(=3)。
+//
+// 关于 wifi eeprom（重要，别改回 mtd-eeprom）：
+//   闭源 mt_wifi 不读 DTS 的 eeprom 节点，它按 defconfig 的
+//   CONFIG_MTK_RT_FIRST_CARD_EEPROM="flash" + CONFIG_MTK_RT_FIRST_IF_RF_OFFSET
+//   直接读 flash。这里的 nvmem-cells 是给开源 mt76 用的（同一份 DTS 两用），
+//   也是本树的标准写法（对照 rax3000m-mtk / 本机参考版）。
+//
+// 刷机前提（硬性，不满足必砖）：
+//   U-Boot 必须是 hanwckf/bl-mt798x 的 mt7981_honor_fur-602，
+//   且 mtd 布局必须是 expand(114m)（默认 default 布局只有 64MiB UBI）。
+
+/dts-v1/;
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+#include "mt7981.dtsi"
+
+/ {
+	model = "HONOR FUR-602/603";
+	compatible = "honor,fur-602", "mediatek,mt7981";
+
+	aliases {
+		serial0 = &uart0;
+		label-mac-device = &gmac0;
+		led-boot = &status_red_led;
+		led-failsafe = &status_red_led;
+		led-running = &status_green_led;
+		led-upgrade = &status_green_led;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory {
+		reg = <0 0x40000000 0 0x10000000>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		button-reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
+		};
+
+		button-mesh {
+			label = "mesh";
+			linux,code = <BTN_9>;
+			linux,input-type = <EV_SW>;
+			gpios = <&pio 0 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+
+		status_green_led: led-0 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&pio 8 GPIO_ACTIVE_LOW>;
+		};
+
+		status_red_led: led-1 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_RED>;
+			gpios = <&pio 13 GPIO_ACTIVE_LOW>;
+		};
+	};
+};
+
+&eth {
+	status = "okay";
+
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "2500base-x";
+
+		nvmem-cells = <&macaddr_factory_2a 0>;
+		nvmem-cell-names = "mac-address";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
+};
+
+&mdio_bus {
+	switch: switch@1f {
+		compatible = "mediatek,mt7531";
+		reg = <31>;
+		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&pio>;
+		interrupts = <38 IRQ_TYPE_LEVEL_HIGH>;
+	};
+};
+
+&pio {
+	spi0_flash_pins: spi0-pins {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+
+		conf-pu {
+			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
+			drive-strength = <8>;
+			mediatek,pull-up-adv = <3>;	/* R1R0_11 */
+		};
+
+		conf-pd {
+			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
+			drive-strength = <8>;
+			mediatek,pull-down-adv = <3>;	/* R1R0_11 */
+		};
+	};
+};
+
+&spi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_flash_pins>;
+	status = "okay";
+
+	spi_nand: flash@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spi-nand";
+		reg = <0>;
+
+		spi-max-frequency = <52000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
+
+		/* 本 PCB 的 SPI 采样延时校准（来自 hanwckf 参考 DTS） */
+		spi-cal-enable;
+		spi-cal-mode = "read-data";
+		spi-cal-datalen = <7>;
+		spi-cal-data = /bits/ 8 <0x53 0x50 0x49 0x4E 0x41 0x4E 0x44>; /* 'SPINAND' */
+		spi-cal-addrlen = <5>;
+		spi-cal-addr = /bits/ 32 <0x0 0x0 0x0 0x0 0x0>;
+
+		/* 必须与 bl-mt798x U-Boot 的 CONFIG_ENABLE_NAND_NMBM=y 一致 */
+		mediatek,nmbm;
+		mediatek,bmt-max-ratio = <1>;
+		mediatek,bmt-max-reserved-blocks = <64>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* 分区名大小写照抄原厂 / U-Boot mtdparts，别改成小写 */
+			partition@0 {
+				label = "BL2";
+				reg = <0x0 0x100000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "u-boot-env";
+				reg = <0x100000 0x80000>;
+			};
+
+			partition@180000 {
+				label = "Factory";
+				reg = <0x180000 0x1e0000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					/* 给 mt76 用的 eeprom cell；mt_wifi 不走这里 */
+					eeprom_factory_0: eeprom@0 {
+						reg = <0x0 0x1000>;
+					};
+
+					/* 荣耀 Factory 的 MAC 布局，若与实际备份不符请改偏移 */
+					macaddr_factory_24: macaddr@24 {
+						compatible = "mac-base";
+						reg = <0x24 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_factory_2a: macaddr@2a {
+						compatible = "mac-base";
+						reg = <0x2a 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+
+			partition@360000 {
+				label = "Trace";
+				reg = <0x360000 0x20000>;
+				read-only;
+			};
+
+			partition@380000 {
+				label = "FIP";
+				reg = <0x380000 0x200000>;
+				read-only;
+			};
+
+			partition@580000 {
+				label = "ubi";
+				reg = <0x580000 0x7200000>;
+			};
+		};
+	};
+};
+
+&switch {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* WAN = 交换口 port0，LAN = port1/2/3（与 hanwckf 5.4 及实测一致） */
+		port@0 {
+			reg = <0>;
+			label = "wan";
+			nvmem-cells = <&macaddr_factory_24 0>;
+			nvmem-cell-names = "mac-address";
+		};
+
+		port@1 {
+			reg = <1>;
+			label = "lan3";
+		};
+
+		port@2 {
+			reg = <2>;
+			label = "lan2";
+		};
+
+		port@3 {
+			reg = <3>;
+			label = "lan1";
+		};
+
+		port@6 {
+			reg = <6>;
+			ethernet = <&gmac0>;
+			phy-mode = "2500base-x";
+
+			fixed-link {
+				speed = <2500>;
+				full-duplex;
+				pause;
+			};
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&wifi {
+	nvmem-cells = <&eeprom_factory_0>;
+	nvmem-cell-names = "eeprom";
+	status = "okay";
+};
