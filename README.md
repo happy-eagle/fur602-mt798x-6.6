@@ -99,7 +99,7 @@ bash set-rf-offset.sh 0x0       # 或 0x80000
 fur602-mt798x-6.6/
 ├── dts/mt7981b-honor-fur-602.dts          # 设备树（对齐实机出包版本）
 ├── mk/filogic.mk.append                   # Device/honor_fur-602 定义
-├── mk/hnat-shim.Makefile                  # kmod-mediatek_hnat 依赖垫片
+├── mk/hnat-module.mk.append               # kmod-mediatek_hnat 包声明
 ├── defconfig/mt7981-honor-fur602.config   # 设备配置：闭源 mt_wifi + HNAT + WARP v2
 ├── diy-part2.sh                           # 一键注入设备适配（幂等 + 带断言）
 ├── build-local.sh                         # Linux 本地编译
@@ -169,16 +169,29 @@ DEPENDS+=+kmod-mediatek_hnat
 依赖不可满足 → 配置系统会把 `kmod-mt_wifi` 整包丢掉 → 编出来的固件没有闭源 WiFi，
 而且 `make defconfig` 不会报错，是静默的。这是最危险的一种失败。
 
-处理方式：
+处理方式：在 `target/linux/mediatek/modules.mk` 末尾补一个
+`KernelPackage/mediatek_hnat`（见 `mk/hnat-module.mk.append`），
+声明 `mtkhnat.ko` 属于这个包，再往 `config-6.6` 钉 `CONFIG_NET_MEDIATEK_HNAT=m`。
 
-1. `mk/hnat-shim.Makefile` 补一个空壳 `KernelPackage/mediatek_hnat`
-   （`FILES` 为空 = 内建），只负责把依赖名补上；
-2. `diy-part2.sh` 往 `target/linux/mediatek/filogic/config-6.6` 追加
-   `CONFIG_NET_MEDIATEK_HNAT=y` + `CONFIG_IP_NF_NAT=y` + `CONFIG_IP_NF_IPTABLES=y`。
+**为什么不能新建一个 `package/xxx/Makefile`**：独立 kmod 包如果没有 `Build/Compile`，
+OpenWrt 会去空的 `PKG_BUILD_DIR` 里跑 `make`，直接报
+`No targets specified and no makefile found` —— 我第一次就是这么写的，
+第二次 CI 就挂在这里。而 `target/linux/<target>/modules.mk` 由
+`package/kernel/linux/Makefile` 引入，那时内核已经编好，
+只需要声明「哪个 .ko 属于哪个包」，本文件里已有的 `ata-ahci-mtk` 就是同样写法。
 
-`CONFIG_IP_NF_NAT` 必须是 `y` 不能是 `m`：`NET_MEDIATEK_HNAT` 是 bool，
-Kconfig 里 `depends on IP_NF_NAT`，依赖项为 `m` 时 bool 符号只能取 `n`，
-HNAT 就直接不可选了。
+`NET_MEDIATEK_HNAT` 在 Kconfig 里是 **tristate**（不是 bool），所以走 `=m`：
+它 `depends on IP_NF_NAT`，而 `IP_NF_NAT` 由 `kmod-ipt-nat` 提供为 `=m`，
+tristate 依赖 m 是合法的。如果强推 `=y`，就得把 `IP_NF_NAT` 也改成 y，
+那样 `kmod-ipt-nat` / `kmod-ipt-core` 的 `.ko` 会变成内建，打包阶段必然报缺文件。
+
+**坑 4：`make ... | tee build.log` 会吃掉退出码**
+
+第二次 CI 的 Build step 显示 `success`，但产物只有 1.48 MB、里面一个 `.bin` 都没有。
+原因是管道默认返回 `tee` 的退出码，`make` 挂了也看不见。
+现在 Build step 里加了 `set -o pipefail`，并且构建后断言
+`*sysupgrade*.bin` / `*factory*.bin` 必须存在，不存在就 `::error` 并打印日志尾部。
+
 
 **顺带修的两处**
 
