@@ -51,18 +51,26 @@ else
 	log "filogic.mk += Device/honor_fur-602"
 fi
 
-# ---------- 3. HNAT：补依赖垫片 + 打开内核内建驱动 ----------
-# 这棵树把 HNAT 做成内核内建（patches-6.6/999-2745），但没有定义
+# ---------- 3. HNAT：在 target 的 modules.mk 里补出 kmod-mediatek_hnat ----------
+# 这棵树把 HNAT 做成了内核驱动（patches-6.6/999-2745），却没有定义
 # kmod-mediatek_hnat 包；而 mt_wifi 的 Makefile 依赖它。依赖不可满足
-# 会导致 kmod-mt_wifi 被配置系统直接丢弃，闭源 WiFi 整个消失。
-HNAT_PKG_DIR="$SRC_DIR/package/mtk/drivers/hnat"
-if [ -f "$HNAT_PKG_DIR/Makefile" ]; then
-	log "HNAT 垫片包已存在，跳过"
+# 会导致 kmod-mt_wifi 被配置系统直接丢弃，闭源 WiFi 整个消失（静默失败）。
+#
+# 注意必须写进 target/linux/mediatek/modules.mk，不能新建独立 package：
+# 独立包没有 Build/Compile 时会去空的 PKG_BUILD_DIR 跑 make，
+# 报 "No targets specified and no makefile found"。
+MODS_MK="$SRC_DIR/target/linux/mediatek/modules.mk"
+[ -f "$MODS_MK" ] || die "找不到 $MODS_MK"
+if grep -q 'KernelPackage/mediatek_hnat' "$MODS_MK"; then
+	log "modules.mk 已包含 mediatek_hnat，跳过"
 else
-	mkdir -p "$HNAT_PKG_DIR"
-	cp -f "$SCRIPT_DIR/mk/hnat-shim.Makefile" "$HNAT_PKG_DIR/Makefile"
-	grep -q 'KernelPackage/mediatek_hnat' "$HNAT_PKG_DIR/Makefile" || die "HNAT 垫片包写入失败"
-	log "package/mtk/drivers/hnat += kmod-mediatek_hnat（依赖垫片）"
+	{
+		echo ''
+		echo '# ---- HONOR FUR-602 build: kmod-mediatek_hnat ----'
+		sed -e 's#^//.*$##' "$SCRIPT_DIR/mk/hnat-module.mk.append" | sed '/^$/d'
+	} >> "$MODS_MK"
+	grep -q 'KernelPackage/mediatek_hnat' "$MODS_MK" || die "modules.mk 注入失败"
+	log "target/linux/mediatek/modules.mk += KernelPackage/mediatek_hnat"
 fi
 
 # mt_wifi 依赖的包名必须真的能解析到，否则 mt_wifi 会被丢弃
