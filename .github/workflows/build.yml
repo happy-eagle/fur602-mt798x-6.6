@@ -85,7 +85,7 @@ jobs:
           test -f target/linux/mediatek/dts/mt7981b-honor-fur-602.dts
           grep -q 'honor,fur-602|' target/linux/mediatek/filogic/base-files/etc/board.d/02_network
           grep -q 'mtd_get_mac_binary Factory 0x2a' target/linux/mediatek/filogic/base-files/etc/board.d/02_network
-          test -f package/mtk/drivers/hnat/Makefile
+          grep -q 'KernelPackage/mediatek_hnat' target/linux/mediatek/modules.mk
           grep -q '^CONFIG_NET_MEDIATEK_HNAT=m$' target/linux/mediatek/filogic/config-6.6
 
       - name: Configure
@@ -116,9 +116,17 @@ jobs:
         working-directory: owrt
         run: |
           df -h /
+          # 关键：make 后面接了 tee，管道默认取 tee 的退出码，
+          # 会把 make 的失败吃掉（踩过一次：构建挂了但 step 显示 success）。
+          set -o pipefail
           make -j"$(nproc)" V=s 2>&1 | tee build.log
           echo "=== 产物 ==="
           ls -lh bin/targets/mediatek/filogic/
+          # 断言真的出了固件，防止"成功但没有 .bin"
+          ls bin/targets/mediatek/filogic/*honor*fur*sysupgrade*.bin >/dev/null 2>&1 \
+            || { echo "::error::没有生成 sysupgrade 固件，构建实际失败"; tail -60 build.log; exit 1; }
+          ls bin/targets/mediatek/filogic/*honor*fur*factory*.bin >/dev/null 2>&1 \
+            || { echo "::error::没有生成 factory 固件"; tail -60 build.log; exit 1; }
           ccache -s || true
 
       - name: Collect artifacts
