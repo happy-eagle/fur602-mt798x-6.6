@@ -99,6 +99,7 @@ bash set-rf-offset.sh 0x0       # 或 0x80000
 fur602-mt798x-6.6/
 ├── dts/mt7981b-honor-fur-602.dts          # 设备树（对齐实机出包版本）
 ├── mk/filogic.mk.append                   # Device/honor_fur-602 定义
+├── mk/hnat-shim.Makefile                  # kmod-mediatek_hnat 依赖垫片
 ├── defconfig/mt7981-honor-fur602.config   # 设备配置：闭源 mt_wifi + HNAT + WARP v2
 ├── diy-part2.sh                           # 一键注入设备适配（幂等 + 带断言）
 ├── build-local.sh                         # Linux 本地编译
@@ -114,6 +115,90 @@ fur602-mt798x-6.6/
 - `CONFIG_PACKAGE_luci-app-turboacc-mtk=y` —— LuCI 里开关加速
 - `CONFIG_PACKAGE_luci-app-eqos-mtk=y` + `mtkhqos_util` —— MTK 硬件 QoS
 - **没有** `kmod-mt7915e` / `kmod-mt7981-firmware` —— 和闭源驱动抢同一个 wifi 节点，`diy-part2.sh` 会断言拦下
+
+---
+
+## 4.1 首次 CI 暴露的坑（已全部修掉）
+
+第一次 Actions 编译挂在 `Apply FUR-602 device support`，日志最后一行是
+`[fur602][FAIL] 02_network 注入失败`。顺着查下去一共三个坑，都不是"随手改改"能过的：
+
+**坑 1：`02_network` 的断言自己写错了**
+
+插入的是多行 case 标签，第一行以续行符结尾：
+
+```sh
+	honor,fur-602|\
+	honor,fur-603)
+```
+
+所以文本里根本不存在 `honor,fur-602)` 这个子串（括号只在最后一行），
+而判重和断言都用 `grep -q 'honor,fur-602)'` —— 注入其实成功了，断言必然失败。
+现在统一用 `honor,fur-602|` 匹配。
+
+**坑 2：DSA 下没有 `eth0`，MAC 分发会写出空的 `MacAddress=`**
+
+6.6 树的 `mediatek_setup_macs()` 默认分支是
+`base_mac=$(cat /sys/class/net/eth0/address)`。DSA 之后网卡叫 `wan`/`lan1..3`，
+没有 `eth0`，于是 `base_mac` 为空，`base+3` / `base+4` 算出来也是空，
+最后往 mt_wifi 的 dat 文件里写一行 `MacAddress=`。
+
+现在给 `honor,fur-602` 单独加了 MAC 分支，偏移直接对齐 DTS 的 nvmem-cells：
+
+| 接口 | 来源 | 说明 |
+|---|---|---|
+| LAN (gmac0) | `Factory 0x2a` | 同时也是 `label-mac-device` |
+| WAN (port0)  | `Factory 0x24` | |
+
+这两个偏移不是我猜的：`RuijieNetworksCommunity/immortalwrt-mt798x-24.10`
+里 `mediatek_setup_macs()` 的默认值就是 `lan_mac_offset="0x2A"` / `wan_mac_offset="0x24"`，
+而那正是你这台机器能正常跑的 5.4 固件用的树。
+
+**坑 3（最隐蔽）：`kmod-mediatek_hnat` 这棵树里根本不存在**
+
+`package/mtk/drivers/mt_wifi/Makefile` 里写着：
+
+```make
+DEPENDS+=+kmod-mediatek_hnat
+```
+
+但全树搜索 `hnat` 只有两处：`mt_wifi/src/.../plug_in/whnat`（WiFi 侧插件）
+和 `target/linux/mediatek/files-6.6/.../mtk_hnat`（内核内建驱动源码）。
+**没有 `kmod-mediatek_hnat` 这个包的定义。**
+
+依赖不可满足 → 配置系统会把 `kmod-mt_wifi` 整包丢掉 → 编出来的固件没有闭源 WiFi，
+而且 `make defconfig` 不会报错，是静默的。这是最危险的一种失败。
+
+处理方式：
+
+1. `mk/hnat-shim.Makefile` 补一个空壳 `KernelPackage/mediatek_hnat`
+   （`FILES` 为空 = 内建），只负责把依赖名补上；
+2. `diy-part2.sh` 往 `target/linux/mediatek/filogic/config-6.6` 追加
+   `CONFIG_NET_MEDIATEK_HNAT=y` + `CONFIG_IP_NF_NAT=y` + `CONFIG_IP_NF_IPTABLES=y`。
+
+`CONFIG_IP_NF_NAT` 必须是 `y` 不能是 `m`：`NET_MEDIATEK_HNAT` 是 bool，
+Kconfig 里 `depends on IP_NF_NAT`，依赖项为 `m` 时 bool 符号只能取 `n`，
+HNAT 就直接不可选了。
+
+**顺带修的两处**
+
+- `&wifi` 去掉 `nvmem-cells = <&eeprom_factory_0>`，只留 `status = "okay"`，
+  和上游 `cmcc,rax3000m` 等 `-mtk` 机型一致。闭源 mt_wifi 走 flash 直读，
+  这个属性没有任何作用，留着只会增加歧义。
+- 补 `&hnat` 节点：
+
+  ```dts
+  &hnat {
+          mtketh-max-gmac = <1>;
+          mtkdsa-wan-port = <0>;
+          status = "okay";
+  };
+  ```
+
+  `mtkdsa-wan-port` 是必须的 —— 驱动里 `hnat_dsa_is_enable()` 就是
+  `return priv->wan_dsa_port != NONE_DSA_PORT;`，不写这个属性，DSA 下的
+  硬件 NAT 卸载永远不会启用。`mtketh-max-gmac` 从 dtsi 默认的 2 改成 1，
+  因为本机只有一个 gmac0。
 
 ---
 
